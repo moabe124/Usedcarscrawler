@@ -1,21 +1,58 @@
-# Studying Web Crawling
+# Usedcarscrawler
 
-Reason: I wanted to buy a car but the olx and mercado livre view didn't help me too much to see the cars prices. So I made this Crawler to get those cars infos and turn them into a chart with a dot for each car and then see the car by price. It turns out to be easier to check wich is the cheapest car from olx.
+Crawler de preços de carros usados da OLX (estado de PE) com uma interface web em
+Python pra visualizar os anúncios num gráfico de preço × ano.
 
-## Required:
-Python 3 and Mongodb on localhost:27017 (or change the url on the constants file to your mongoUrl)
+**Motivação:** queria comprar um carro, mas a visualização da OLX/Mercado Livre não
+ajudava a comparar preços. Esse projeto raspa os anúncios, salva no MongoDB e mostra
+cada carro como um ponto num gráfico — fica fácil achar o mais barato.
 
-## Needed:
-Download chromedrive.exe compatible with your google chrome version on their website
+## Componentes
 
-After everything configured you will need to run:
+- **`updateDatabase.py`** — crawler: roda em loop, raspa a OLX via Selenium e grava no MongoDB.
+- **`app.py`** — app Flask: serve a API JSON (`/api/cars`) e a página com o gráfico (`/`).
+  A página tem uma **calculadora de financiamento** (Tabela Price): você configura
+  juros (% a.m.) e entrada (R$), e cada carro mostra as parcelas em **48x e 60x**.
+  O eixo Y do gráfico pode alternar entre preço total e valor da parcela.
+- **`utils/`** — núcleo do crawler (`crawlerCore.py`) e configurações (`constants.py`).
 
+## Rodando com Docker (recomendado)
+
+Sobe MongoDB + web + crawler de uma vez:
+
+```bash
+docker compose up --build
+```
+
+Depois acesse **http://localhost:5000**. O crawler começa a popular o banco em background.
+
+## Rodando local (sem Docker)
+
+Requisitos: **Python 3.12**, **Google Chrome** instalado e um **MongoDB** acessível
+(local em `localhost:27017` ou aponte `MONGO_URI`).
+
+```bash
 pip install -r requirements.txt
 
-and to run the project API execute this in the terminal at the project folder:
+# 1) interface web (API + gráfico)
+python app.py            # http://localhost:5000
 
-python -m flask -A app.py --debug run
-
-If you just want to run the webcrawler just run the:
-
+# 2) crawler (em outro terminal, popula o banco)
 python updateDatabase.py
+```
+
+> O Selenium 4.6+ baixa o chromedriver automaticamente (Selenium Manager) — não
+> precisa mais baixar o `chromedriver.exe` manualmente.
+
+## Variáveis de ambiente
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `MONGO_URI` | `mongodb://localhost:27017` | Conexão com o MongoDB |
+| `PAGE_LIMIT` | `10` | Quantas páginas o crawler percorre por ciclo |
+| `PRICE_CEILING` | `300000` | Preço máximo (R$) considerado; acima disso é ignorado |
+
+## API
+
+- `GET /api/cars?brand=<texto>&limit=<n>` — lista de carros (ordenados por preço).
+- `GET /api/health` — status do serviço e contagem de carros.

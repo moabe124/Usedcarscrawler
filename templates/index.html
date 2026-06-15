@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seminovos · Preços OLX</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #181b22; --border: #272b34;
+      --text: #e6e8ec; --muted: #9aa0ac; --accent: #6c8cff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    header { padding: 20px; border-bottom: 1px solid var(--border); }
+    h1 { margin: 0 0 4px; font-size: 1.3rem; }
+    .sub { color: var(--muted); font-size: .9rem; }
+    .controls { display: flex; gap: 12px; padding: 16px 20px; flex-wrap: wrap; align-items: flex-end; }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    input, select {
+      background: var(--panel); border: 1px solid var(--border); color: var(--text);
+      padding: 9px 11px; border-radius: 8px; font-size: .95rem;
+    }
+    input[type=text] { min-width: 200px; }
+    input[type=number] { width: 120px; }
+    button {
+      background: var(--accent); border: 0; color: #fff; padding: 10px 16px;
+      border-radius: 8px; font-size: .95rem; cursor: pointer; height: 38px;
+    }
+    .stats { color: var(--muted); font-size: .9rem; margin-left: auto; align-self: center; }
+    .demo-note { color: #e0b341; font-size: .85rem; padding: 0 20px 8px; display: none; }
+    .panel { background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; margin: 0 20px 20px; padding: 16px; }
+    #chartWrap { height: 58vh; min-height: 320px; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 600; }
+    tr:hover td { background: #1f232c; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .empty { color: var(--muted); padding: 30px; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🚗 Seminovos · Preços OLX</h1>
+    <div class="sub">Cada ponto é um anúncio. Passe o mouse para ver as parcelas; clique para abrir na OLX.</div>
+  </header>
+
+  <div class="controls">
+    <div class="field">
+      <label for="brand">Marca / modelo</label>
+      <input id="brand" type="text" placeholder="ex: gol, civic">
+    </div>
+    <button id="search">Buscar</button>
+    <div class="field">
+      <label for="rate">Juros (% a.m.)</label>
+      <input id="rate" type="number" value="1.5" step="0.1" min="0">
+    </div>
+    <div class="field">
+      <label for="entrada">Entrada (R$)</label>
+      <input id="entrada" type="number" value="0" step="1000" min="0">
+    </div>
+    <div class="field">
+      <label for="maxprice">Preço máx (R$)</label>
+      <input id="maxprice" type="number" value="" step="1000" min="0" placeholder="sem limite">
+    </div>
+    <div class="field">
+      <label for="yaxis">Eixo Y</label>
+      <select id="yaxis">
+        <option value="price">Preço total</option>
+        <option value="p48">Parcela 48x</option>
+        <option value="p60">Parcela 60x</option>
+      </select>
+    </div>
+    <span class="stats" id="stats"></span>
+  </div>
+  <div class="demo-note" id="demoNote">⚠️ API indisponível — exibindo dados de exemplo para demonstração.</div>
+
+  <div class="panel"><div id="chartWrap"><canvas id="chart"></canvas></div></div>
+
+  <div class="panel">
+    <table>
+      <thead><tr><th>#</th><th>Anúncio</th><th>Ano</th><th>KM</th><th>Preço</th><th>48x</th><th>60x</th><th></th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none">Nenhum carro encontrado.</div>
+  </div>
+
+  <script>
+    let chart;
+    let currentCars = [];
+
+    const BRL = v => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+    const BRL2 = v => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    function toYear(v) {
+      const n = parseInt(String(v).replace(/\D/g, ""), 10);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    // Tabela Price: parcela fixa de um financiamento.
+    function pmt(price, entrada, monthlyRatePct, n) {
+      const pv = Math.max(price - entrada, 0);
+      if (pv <= 0) return 0;
+      const i = monthlyRatePct / 100;
+      if (i === 0) return pv / n;
+      return pv * i / (1 - Math.pow(1 + i, -n));
+    }
+
+    function config() {
+      return {
+        rate: parseFloat(document.getElementById("rate").value) || 0,
+        entrada: parseFloat(document.getElementById("entrada").value) || 0,
+        maxPrice: parseFloat(document.getElementById("maxprice").value) || 0,
+        yaxis: document.getElementById("yaxis").value,
+      };
+    }
+
+    async function load(brand = "") {
+      try {
+        const res = await fetch("/api/cars?brand=" + encodeURIComponent(brand));
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const cars = await res.json();
+        if (!Array.isArray(cars) || cars.length === 0) throw new Error("vazio");
+        document.getElementById("demoNote").style.display = "none";
+        currentCars = cars;
+      } catch (err) {
+        // Sem API (ex.: preview sem Flask): usa dados de exemplo.
+        document.getElementById("demoNote").style.display = "block";
+        currentCars = SAMPLE.filter(c =>
+          !brand || c.announceName.toLowerCase().includes(brand.toLowerCase()));
+      }
+      render();
+    }
+
+    function render() {
+      const cfg = config();
+      const cars = cfg.maxPrice > 0
+        ? currentCars.filter(c => c.price <= cfg.maxPrice)
+        : currentCars;
+
+      const yMeta = {
+        price: { label: "Preço (R$)", val: c => c.price, n: 0 },
+        p48:   { label: "Parcela 48x (R$)", val: c => pmt(c.price, cfg.entrada, cfg.rate, 48), n: 48 },
+        p60:   { label: "Parcela 60x (R$)", val: c => pmt(c.price, cfg.entrada, cfg.rate, 60), n: 60 },
+      }[cfg.yaxis];
+
+      document.getElementById("stats").textContent =
+        cars.length + " carros" + (cars.length ? " · a partir de " + BRL(Math.min(...cars.map(c => c.price))) : "");
+
+      const points = cars
+        .map(c => ({ x: toYear(c.year), y: yMeta.val(c), car: c }))
+        .filter(p => p.x !== null);
+
+      if (chart) chart.destroy();
+      chart = new Chart(document.getElementById("chart"), {
+        type: "scatter",
+        data: { datasets: [{
+          label: "Carros", data: points,
+          backgroundColor: "rgba(108,140,255,0.55)",
+          pointRadius: 5, pointHoverRadius: 8,
+        }]},
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          onClick: (e, els) => {
+            if (els.length) {
+              const link = points[els[0].index].car.link;
+              if (link) window.open(link, "_blank");
+            }
+          },
+          scales: {
+            x: { title: { display: true, text: "Ano", color: "#9aa0ac" },
+                 ticks: { color: "#9aa0ac" }, grid: { color: "#272b34" } },
+            y: { title: { display: true, text: yMeta.label, color: "#9aa0ac" },
+                 ticks: { color: "#9aa0ac", callback: v => BRL(v) },
+                 grid: { color: "#272b34" } },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: {
+              label: ctx => {
+                const c = ctx.raw.car;
+                const p48 = pmt(c.price, cfg.entrada, cfg.rate, 48);
+                const p60 = pmt(c.price, cfg.entrada, cfg.rate, 60);
+                return [
+                  c.announceName,
+                  BRL(c.price) + " · " + c.year + " · " + c.kilometer,
+                  "48x de " + BRL2(p48),
+                  "60x de " + BRL2(p60),
+                ];
+              }
+            }}
+          }
+        }
+      });
+
+      const tbody = document.getElementById("tbody");
+      tbody.innerHTML = "";
+      const sorted = [...cars].sort((a, b) => a.price - b.price);
+      document.getElementById("empty").style.display = cars.length ? "none" : "block";
+      sorted.slice(0, 50).forEach((c, i) => {
+        const p48 = pmt(c.price, cfg.entrada, cfg.rate, 48);
+        const p60 = pmt(c.price, cfg.entrada, cfg.rate, 60);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${i + 1}</td><td>${c.announceName}</td><td>${c.year}</td>` +
+          `<td>${c.kilometer}</td><td>${BRL(c.price)}</td>` +
+          `<td>${BRL2(p48)}</td><td>${BRL2(p60)}</td>` +
+          `<td><a href="${c.link}" target="_blank">ver →</a></td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    document.getElementById("search").onclick = () =>
+      load(document.getElementById("brand").value.trim());
+    document.getElementById("brand").addEventListener("keydown", e => {
+      if (e.key === "Enter") document.getElementById("search").click();
+    });
+    // Recalcula sem refazer a busca quando a config de financiamento muda.
+    ["rate", "entrada", "maxprice", "yaxis"].forEach(id =>
+      document.getElementById(id).addEventListener("input", render));
+
+    // Dados de exemplo para demonstração quando a API não está disponível.
+    const SAMPLE = [
+      { announceName: "VW Gol 1.0 2015", price: 32000, year: "2015", kilometer: "98.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Fiat Uno Way 2017", price: 38500, year: "2017", kilometer: "72.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Chevrolet Onix LT 2018", price: 52000, year: "2018", kilometer: "61.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Hyundai HB20 1.0 2016", price: 45000, year: "2016", kilometer: "85.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Honda Civic LXR 2014", price: 68000, year: "2014", kilometer: "120.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Toyota Corolla XEI 2019", price: 92000, year: "2019", kilometer: "54.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Renault Sandero 2016", price: 36000, year: "2016", kilometer: "99.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Ford Ka SE 2018", price: 41000, year: "2018", kilometer: "67.000 km", link: "https://www.olx.com.br" },
+      { announceName: "VW Polo Highline 2020", price: 78000, year: "2020", kilometer: "40.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Jeep Renegade Sport 2017", price: 73000, year: "2017", kilometer: "88.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Fiat Argo Drive 2019", price: 49000, year: "2019", kilometer: "58.000 km", link: "https://www.olx.com.br" },
+      { announceName: "Chevrolet Prisma LTZ 2015", price: 43000, year: "2015", kilometer: "110.000 km", link: "https://www.olx.com.br" },
+    ];
+
+    load();
+  </script>
+</body>
+</html>

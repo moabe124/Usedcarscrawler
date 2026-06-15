@@ -1,20 +1,18 @@
 # -*- coding: utf-8 -*-
-# Must have google chrome installed or change drive config for edge
+# Requires Google Chrome installed. Selenium Manager resolves the driver.
 
 import os
 
-mongo_uri = os.environ.get('MONGO_URI') if os.environ.get(
-    'MONGO_URI') else "mongodb://localhost:27017"
-
-connectionString = mongo_uri
+connectionString = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
 
 databaseName = "py"
 
 collectionName = "cars"
 
-pageLimit = 10
+pageLimit = int(os.environ.get("PAGE_LIMIT", "10"))
 
-chromeDriveLocation = os.environ.get('CHROME_DRIVE_LOCATION')
+# Ads priced at or above this (in BRL) are ignored as outliers / data noise.
+PRICE_CEILING = int(os.environ.get("PRICE_CEILING", "300000"))
 
 monthsDictionary = {
     "jan": "January",

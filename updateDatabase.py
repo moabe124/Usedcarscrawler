@@ -1,103 +1,72 @@
 import logging
-import pymongo
-import utils.crawlerCore
 import time
 from datetime import datetime
+
 from pymongo import MongoClient, UpdateOne
-from pprint import pprint
+
+import utils.crawlerCore as crawlerCore
 from utils.constants import collectionName, databaseName, connectionString, pageLimit
-
-
-class DuplicatedRegister(Exception):
-    def __init__(self, message, registers):
-        self.message = message
-        self.registers = registers
-
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
+# How long to wait between pages and between full crawl cycles.
+PAGE_DELAY_SECONDS = 60
+CYCLE_DELAY_SECONDS = 180
 
-def get_database():
 
-    # Create a connection using MongoClient. You can import MongoClient or use pymongo.MongoClient
+def get_collection():
     client = MongoClient(connectionString)
-
-    # Create the database for our example (we will use the same database throughout the tutorial
-    return client[databaseName]
+    return client[databaseName][collectionName]
 
 
-def get_cars_info(carBrand="", page=1):
-
-    # create the driver object.
-    driver = utils.crawlerCore.configure_driver()
-
-    cars = utils.crawlerCore.getCars(driver, carBrand, page)
-
-    driver.close()
-
-    return cars
-
-
-def update_database(cars, page):
-
-    try:
-        dbname = get_database()
-        collection_name = dbname[collectionName]
-
-        operations = []
-        for car in cars:
-            filter = {"announceName": car["announceName"]}
-            update = {"$set": car}
-            operation = UpdateOne(filter, update, upsert=True)
-            operations.append(operation)
-
-        result = collection_name.bulk_write(operations)
-
-        if result.modified_count > 0:
-            raise DuplicatedRegister(
-                f"{result.modified_count} duplicates on page {page}", result.modified_count)
-
-        logging.info(f"Zero duplicates on page {page}")
-
+def upsert_cars(collection, cars, page):
+    """Upsert ads by announceName. Returns how many existing ads were updated."""
+    if not cars:
+        logging.info("No cars to upsert on page %s", page)
         return 0
 
-    except DuplicatedRegister as e:
-        logging.info(e.message)
-        return e.registers
+    operations = [
+        UpdateOne({"announceName": car["announceName"]}, {"$set": car}, upsert=True)
+        for car in cars
+    ]
+    result = collection.bulk_write(operations)
+
+    if result.modified_count > 0:
+        logging.info("%d duplicates (updates) on page %s",
+                     result.modified_count, page)
+    else:
+        logging.info("Zero duplicates on page %s", page)
+
+    return result.modified_count
 
 
-def populate_db(cars):
-
-    # Get the database
-    dbname = get_database()
-
-    collection_name = dbname[collectionName]
-
-    for car in cars:
-        collection_name.replace_one({'_id': car['_id']}, car, True)
-
-    return 0
-
-
-# This is added so that many files can reuse the function get_database()
-if __name__ == "__main__":
-
-    while True:
-        logging.info("started")
+def crawl_cycle(collection):
+    """Walk pages until we hit known ads (duplicates) or the page limit."""
+    driver = crawlerCore.configure_driver()
+    try:
         page = 1
         duplicates = 0
-
         while duplicates == 0 and page < pageLimit:
-            duplicates = update_database(get_cars_info("", page), page)
-            # duplicates = populate_db(get_cars_info("", page))
-            logging.info(
-                f"##########################   {page}    ###########################################")
-            page = page + 1
-            if (duplicates == 0 and page < pageLimit):
-                time.sleep(60)
+            cars = crawlerCore.getCars(driver, "", page)
+            duplicates = upsert_cars(collection, cars, page)
+            logging.info("######### page %s done #########", page)
+            page += 1
+            if duplicates == 0 and page < pageLimit:
+                time.sleep(PAGE_DELAY_SECONDS)
+    finally:
+        driver.quit()
 
-        logging.info(f"slept at: {datetime.now()}")
-        time.sleep(180)
+
+if __name__ == "__main__":
+    collection = get_collection()
+    while True:
+        logging.info("Crawl cycle started")
+        try:
+            crawl_cycle(collection)
+        except Exception as exc:
+            logging.exception("Crawl cycle failed: %s", exc)
+        logging.info("Cycle finished, sleeping at %s", datetime.now())
+        time.sleep(CYCLE_DELAY_SECONDS)

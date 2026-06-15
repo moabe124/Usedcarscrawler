@@ -1,5 +1,14 @@
-selenium
-BeautifulSoup4
-pymongo
-lxml
-pytz
+# Crawler
+selenium==4.27.1
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# Database
+pymongo==4.10.1
+
+# Timezone data (zoneinfo needs this on Windows; Linux uses the system tzdb)
+tzdata==2024.2
+
+# Web app (API + front-end)
+Flask==3.1.0
+gunicorn==23.0.0
