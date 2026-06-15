@@ -1,3 +1,4 @@
+import re
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -13,6 +14,8 @@ from utils.constants import formattedURL, monthsDictionary, PRICE_CEILING
 
 # Brazil time (UTC-3). Etc/GMT-3 is intentionally "inverted": it means UTC-3.
 BR_TZ = ZoneInfo("Etc/GMT-3")
+
+YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
 
 def translate_date(inputDate):
@@ -55,47 +58,65 @@ def configure_driver():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    # Selenium 4.6+ ships Selenium Manager: it resolves and downloads the
-    # matching chromedriver automatically, no manual binary needed.
+    chrome_options.add_argument("--window-size=1280,900")
+    # Lower the automation fingerprint so OLX's Cloudflare challenge lets us in.
+    # Plain headless gets blocked; these tweaks + a real UA pass the managed check.
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
     return webdriver.Chrome(options=chrome_options)
 
 
-def checkPrice(priceText):
-    if not priceText:
+def checkPrice(priceEl):
+    if not priceEl:
         return None
-    digits = priceText.text.replace("R$", "").replace(".", "").strip()
+    digits = priceEl.get_text().replace("R$", "").replace(".", "").strip()
     return int(digits) if digits.isdigit() else None
 
 
-def parse_card(carCard):
-    """Parse a single ad card. Returns a dict or None if the card is malformed."""
-    second_div = carCard.select_one('div:nth-of-type(2)')
-    if not second_div:
-        return None
-    labelGroup = second_div.select('span')
-    if len(labelGroup) < 4:
-        return None
+def parse_card(card):
+    """Parse a single `section.olx-adcard`. Returns a dict or None if unusable.
 
-    price = checkPrice(carCard.select_one("span[color='--color-neutral-130']"))
+    The listing card no longer exposes fields by fixed position: detail chips are
+    [km, color, engine, bodyType] (variable), and the year lives in the title.
+    """
+    price = checkPrice(card.select_one("h3.olx-adcard__price"))
     if price is None or price >= PRICE_CEILING:
         return None
 
-    title = carCard.select_one("h2")
-    img = carCard.select_one("img")
+    title_el = card.select_one("h2.olx-adcard__title") or card.find("h2")
+    title = title_el.get_text(strip=True) if title_el else ""
+
+    link_el = card.select_one("a.olx-adcard__link") or card.find("a", href=True)
+    img_el = card.find("img")
+
+    details = [d.get_text(" ", strip=True) for d in card.select(".olx-adcard__detail")]
+    kilometer = next((d for d in details if "km" in d.lower()),
+                     details[0] if details else "")
+
+    year_matches = YEAR_RE.findall(title)
+    year = year_matches[-1] if year_matches else ""
+
+    location_el = card.select_one("p.olx-adcard__location")
+    date_el = card.select_one("p.olx-adcard__date")
+    post_date = date_el.get_text(strip=True) if date_el else ""
 
     return {
-        "announceName": title.text if title else "",
+        "announceName": title,
         "formattedPrice": f"R$ {price:,}".replace(",", "."),
         "price": price,
-        "kilometer": labelGroup[0].text,
-        "year": labelGroup[1].text,
-        "gasType": labelGroup[2].text,
-        "shiftType": labelGroup[3].text,
-        "link": carCard.attrs.get("href", ""),
-        "img": img.attrs.get("src", "") if img else "",
-        "location": labelGroup[-3].text if len(labelGroup) >= 3 else "",
-        "postDate": translate_date(labelGroup[-1].text),
+        "kilometer": kilometer,
+        "year": year,
+        "color": details[1] if len(details) > 1 else "",
+        "engine": details[2] if len(details) > 2 else "",
+        "bodyType": details[3] if len(details) > 3 else "",
+        "link": link_el["href"] if link_el and link_el.has_attr("href") else "",
+        "img": img_el.get("src", "") if img_el else "",
+        "location": location_el.get_text(strip=True) if location_el else "",
+        "postDate": translate_date(post_date) if post_date else datetime.now(BR_TZ),
         "created": datetime.now(BR_TZ),
     }
 
@@ -104,21 +125,23 @@ def getCars(driver, carBrand="", page=1):
     driver.get(formattedURL(carBrand, page))
 
     try:
-        WebDriverWait(driver, 10).until(
-            lambda s: s.find_element(By.CSS_SELECTOR, "#ad-list").is_displayed())
+        # Waiting for the cards also gives the Cloudflare challenge time to resolve.
+        WebDriverWait(driver, 25).until(
+            lambda s: s.find_elements(By.CSS_SELECTOR, "section.olx-adcard"))
     except TimeoutException:
-        logging.warning("Timeout: #ad-list not found on page %s", page)
+        logging.warning("Timeout: no ad cards on page %s (title=%r)",
+                        page, driver.title)
         return []
 
     entirePage = BeautifulSoup(driver.page_source, "html.parser")
 
     cars = []
-    cards = entirePage.select('li a[data-ds-component="DS-AdCardHorizontal"]')
-    for carCard in cards:
+    cards = entirePage.select("section.olx-adcard")
+    for card in cards:
         try:
-            car = parse_card(carCard)
-            if car:
-                cars.append(car)
+            parsed = parse_card(card)
+            if parsed:
+                cars.append(parsed)
         except Exception as exc:  # one broken card must not kill the whole page
             logging.warning("Failed to parse a card: %s", exc)
 
@@ -130,6 +153,7 @@ def getCars(driver, carBrand="", page=1):
 if __name__ == "__main__":
     driver = configure_driver()
     try:
-        print(getCars(driver))
+        for car in getCars(driver):
+            print(car["price"], car["year"], car["announceName"][:40])
     finally:
         driver.quit()
