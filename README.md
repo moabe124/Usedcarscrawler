@@ -73,6 +73,33 @@ python updateDatabase.py
 > até alcançar `BACKFILL_TARGET` registros (ou esgotar as páginas). Útil pra popular
 > o banco do zero.
 
+## Avaliação por LLM local (opcional, em validação)
+
+Um LLM rodando **localmente** lê a descrição do anúncio (da tela de detalhe) e
+gera um resumo opinativo, um score de custo-benefício, tags, campos estruturados
+(único dono, IPVA pago, aceita troca...) e red flags.
+
+**Setup (recomendado para GPU AMD):**
+
+1. Instale o **LM Studio** (https://lmstudio.ai).
+2. Baixe o modelo **`qwen2.5-7b-instruct`** (Q4_K_M) e selecione o runtime
+   **Vulkan** (usa a GPU AMD; ROCm pode não suportar RDNA4 ainda).
+3. Em **Developer / Local Server**, carregue o modelo e inicie o servidor
+   (porta padrão `1234`).
+4. Valide a qualidade em poucos carros, sem gravar nada no banco:
+
+```bash
+python validate_llm.py          # 3 carros; VALIDATE_N=5 para mais
+```
+
+> Funciona com qualquer servidor compatível com OpenAI. Para usar Ollama:
+> `LLM_BASE_URL=http://localhost:11434/v1` no `.env`.
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `LLM_BASE_URL` | `http://localhost:1234/v1` | Endpoint do servidor LLM (LM Studio) |
+| `LLM_MODEL` | `qwen2.5-7b-instruct` | Nome do modelo carregado |
+
 ## API
 
 - `GET /api/cars?brand=<texto>&limit=<n>` — lista de carros (ordenados por preço).

@@ -1,4 +1,6 @@
 import re
+import json
+import time
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -148,6 +150,58 @@ def getCars(driver, carBrand="", page=1):
     logging.info("Crawler OK: %d/%d cards parsed on page %s",
                  len(cars), len(cards), page)
     return cars
+
+
+def _collect_descriptions(obj):
+    """Recursively gather every JSON-LD 'description' string."""
+    found = []
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key == "description" and isinstance(value, str):
+                found.append(value)
+            else:
+                found.extend(_collect_descriptions(value))
+    elif isinstance(obj, list):
+        for value in obj:
+            found.extend(_collect_descriptions(value))
+    return found
+
+
+def extract_description(html):
+    """Pull the ad description from the detail page's JSON-LD block.
+
+    OLX embeds it in <script type="application/ld+json"> as
+    makesOffer.itemOffered.description — far more stable than scraping spans.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    candidates = []
+    for sc in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        if not sc.string:
+            continue
+        try:
+            data = json.loads(sc.string)
+        except (ValueError, TypeError):
+            continue
+        candidates.extend(_collect_descriptions(data))
+    if not candidates:
+        return ""
+    desc = max(candidates, key=len)
+    desc = re.sub(r"<[^>]+>", "\n", desc)          # OLX stores literal <br> tags
+    return re.sub(r"\n{3,}", "\n\n", desc).strip()
+
+
+def fetch_detail(driver, link, settle_seconds=5):
+    """Visit one ad detail page and return its description text (or '')."""
+    driver.get(link)
+    try:
+        WebDriverWait(driver, 20).until(
+            lambda s: s.find_elements(
+                By.CSS_SELECTOR, 'script[type="application/ld+json"]'))
+    except TimeoutException:
+        logging.warning("Detail timeout for %s (title=%r)", link, driver.title)
+        return ""
+    time.sleep(settle_seconds)  # let JS settle / Cloudflare clear
+    return extract_description(driver.page_source)
 
 
 if __name__ == "__main__":
