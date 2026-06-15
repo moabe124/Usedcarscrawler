@@ -1,7 +1,6 @@
-# Crawler
+# Crawler (BeautifulSoup uses Python's built-in html.parser — no lxml/compiler needed)
 selenium==4.27.1
 beautifulsoup4==4.12.3
-lxml==5.3.0
 
 # Database. dnspython is required to resolve Atlas mongodb+srv:// URIs.
 pymongo==4.10.1

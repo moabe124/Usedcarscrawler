@@ -110,7 +110,7 @@ def getCars(driver, carBrand="", page=1):
         logging.warning("Timeout: #ad-list not found on page %s", page)
         return []
 
-    entirePage = BeautifulSoup(driver.page_source, "lxml")
+    entirePage = BeautifulSoup(driver.page_source, "html.parser")
 
     cars = []
     cards = entirePage.select('li a[data-ds-component="DS-AdCardHorizontal"]')
