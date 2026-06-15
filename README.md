@@ -62,8 +62,16 @@ python updateDatabase.py
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `MONGO_URI` | `mongodb://localhost:27017` | Conexão com o MongoDB |
-| `PAGE_LIMIT` | `10` | Quantas páginas o crawler percorre por ciclo |
+| `PAGE_LIMIT` | `10` | Quantas páginas o crawler percorre por ciclo normal |
 | `PRICE_CEILING` | `300000` | Preço máximo (R$) considerado; acima disso é ignorado |
+| `BACKFILL_THRESHOLD` | `200` | Abaixo deste nº de registros, entra em modo backfill |
+| `BACKFILL_TARGET` | `500` | Meta de registros a atingir no modo backfill |
+| `BACKFILL_MAX_PAGES` | `30` | Teto de páginas no backfill (evita loop infinito) |
+
+> **Modo backfill:** quando o banco tem menos de `BACKFILL_THRESHOLD` registros, o
+> crawler ignora a parada por anúncios repetidos e percorre páginas continuamente
+> até alcançar `BACKFILL_TARGET` registros (ou esgotar as páginas). Útil pra popular
+> o banco do zero.
 
 ## API
 

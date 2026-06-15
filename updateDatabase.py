@@ -1,3 +1,4 @@
+import os
 import logging
 import time
 from datetime import datetime
@@ -15,6 +16,13 @@ logging.basicConfig(
 # How long to wait between pages and between full crawl cycles.
 PAGE_DELAY_SECONDS = 60
 CYCLE_DELAY_SECONDS = 180
+
+# Backfill mode: when the DB has fewer than THRESHOLD records, crawl pages
+# continuously (ignoring the duplicate-stop heuristic) until it holds TARGET
+# records. MAX_PAGES caps it so we never loop forever.
+BACKFILL_THRESHOLD = int(os.environ.get("BACKFILL_THRESHOLD", "200"))
+BACKFILL_TARGET = int(os.environ.get("BACKFILL_TARGET", "500"))
+BACKFILL_MAX_PAGES = int(os.environ.get("BACKFILL_MAX_PAGES", "30"))
 
 
 def get_collection():
@@ -60,13 +68,47 @@ def crawl_cycle(collection):
         driver.quit()
 
 
+def backfill_cycle(collection):
+    """DB is nearly empty: keep crawling pages until it holds BACKFILL_TARGET
+    records (or we run out of pages / hit the safety cap)."""
+    driver = crawlerCore.configure_driver()
+    try:
+        page = 1
+        while page <= BACKFILL_MAX_PAGES:
+            count = collection.count_documents({})
+            if count >= BACKFILL_TARGET:
+                logging.info("Backfill done: %d records (target %d)",
+                             count, BACKFILL_TARGET)
+                break
+
+            cars = crawlerCore.getCars(driver, "", page)
+            if not cars:
+                logging.info("Backfill: no cars on page %s; stopping early", page)
+                break
+            upsert_cars(collection, cars, page)
+            logging.info("Backfill: %d records after page %s",
+                         collection.count_documents({}), page)
+
+            page += 1
+            if collection.count_documents({}) < BACKFILL_TARGET and page <= BACKFILL_MAX_PAGES:
+                time.sleep(PAGE_DELAY_SECONDS)
+    finally:
+        driver.quit()
+
+
 if __name__ == "__main__":
     collection = get_collection()
     while True:
-        logging.info("Crawl cycle started")
+        count = collection.count_documents({})
         try:
-            crawl_cycle(collection)
+            if count < BACKFILL_THRESHOLD:
+                logging.info("Only %d records (< %d): backfilling toward %d",
+                             count, BACKFILL_THRESHOLD, BACKFILL_TARGET)
+                backfill_cycle(collection)
+            else:
+                logging.info("Crawl cycle started (%d records)", count)
+                crawl_cycle(collection)
         except Exception as exc:
-            logging.exception("Crawl cycle failed: %s", exc)
+            logging.exception("Cycle failed: %s", exc)
         logging.info("Cycle finished, sleeping at %s", datetime.now())
         time.sleep(CYCLE_DELAY_SECONDS)
