@@ -3,6 +3,13 @@
 
 import os
 
+# Load variables from a local .env file if present (e.g. MONGO_URI from Atlas).
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ModuleNotFoundError:
+    pass
+
 connectionString = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
 
 databaseName = "py"

@@ -7,3 +7,5 @@ chromedriver.exe
 .vscode
 
 data
+
+.env

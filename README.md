@@ -26,10 +26,23 @@ docker compose up --build
 
 Depois acesse **http://localhost:5000**. O crawler começa a popular o banco em background.
 
+## Banco grátis na nuvem (MongoDB Atlas)
+
+Pra rodar sem Docker, o jeito mais simples é usar o **MongoDB Atlas** (tier free M0,
+512 MB, sem cartão):
+
+1. Crie uma conta em https://www.mongodb.com/cloud/atlas e um cluster **M0 (Free)**.
+2. Em **Database Access**, crie um usuário/senha.
+3. Em **Network Access**, libere seu IP (ou `0.0.0.0/0` para testar de qualquer lugar).
+4. Em **Database > Connect > Drivers**, copie a connection string (`mongodb+srv://...`).
+5. Copie `.env.example` para `.env` e cole a string em `MONGO_URI`.
+
+O `.env` é carregado automaticamente (`python-dotenv`) e nunca é comitado.
+
 ## Rodando local (sem Docker)
 
 Requisitos: **Python 3.12**, **Google Chrome** instalado e um **MongoDB** acessível
-(local em `localhost:27017` ou aponte `MONGO_URI`).
+— use o Atlas (acima) ou um Mongo local em `localhost:27017`.
 
 ```bash
 pip install -r requirements.txt

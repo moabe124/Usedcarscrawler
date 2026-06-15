@@ -3,8 +3,12 @@ selenium==4.27.1
 beautifulsoup4==4.12.3
 lxml==5.3.0
 
-# Database
+# Database. dnspython is required to resolve Atlas mongodb+srv:// URIs.
 pymongo==4.10.1
+dnspython==2.8.0
+
+# Load MONGO_URI (and friends) from a local .env file
+python-dotenv==1.0.1
 
 # Timezone data (zoneinfo needs this on Windows; Linux uses the system tzdb)
 tzdata==2024.2
