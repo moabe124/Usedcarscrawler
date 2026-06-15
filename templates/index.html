@@ -53,6 +53,9 @@
     table { width: 100%; border-collapse: collapse; font-size: .9rem; }
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
     th { color: var(--muted); font-weight: 600; }
+    th[data-key] { cursor: pointer; user-select: none; }
+    th[data-key]:hover { color: var(--text); }
+    th .arrow { color: var(--accent); font-size: .8em; }
     tr:hover td { background: #1f232c; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
@@ -103,7 +106,16 @@
 
   <div class="panel">
     <table>
-      <thead><tr><th>#</th><th>Anúncio</th><th>Ano</th><th>KM</th><th>Preço</th><th>48x</th><th>60x</th><th></th></tr></thead>
+      <thead><tr>
+        <th>#</th>
+        <th data-key="announceName">Anúncio<span class="arrow"></span></th>
+        <th data-key="year">Ano<span class="arrow"></span></th>
+        <th data-key="km">KM<span class="arrow"></span></th>
+        <th data-key="price">Preço<span class="arrow"></span></th>
+        <th data-key="p48">48x<span class="arrow"></span></th>
+        <th data-key="p60">60x<span class="arrow"></span></th>
+        <th></th>
+      </tr></thead>
       <tbody id="tbody"></tbody>
     </table>
     <div class="empty" id="empty" style="display:none">Nenhum carro encontrado.</div>
@@ -112,6 +124,7 @@
   <script>
     let chart;
     let currentCars = [];
+    let sortKey = "price", sortDir = 1, lastTableCars = [];
 
     const BRL = v => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
     const BRL2 = v => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -235,9 +248,35 @@
         }
       });
 
+      renderTable(cars);
+    }
+
+    function renderTable(cars) {
+      lastTableCars = cars;
+      const cfg = config();
+      const accessor = {
+        announceName: c => (c.announceName || "").toLowerCase(),
+        year: c => toYear(c.year) || 0,
+        km: c => parseInt(String(c.kilometer).replace(/\D/g, ""), 10) || 0,
+        price: c => c.price,
+        p48: c => pmt(c.price, cfg.entrada, cfg.rate, 48),
+        p60: c => pmt(c.price, cfg.entrada, cfg.rate, 60),
+      }[sortKey];
+
+      const sorted = [...cars].sort((a, b) => {
+        const va = accessor(a), vb = accessor(b);
+        return (typeof va === "string" ? va.localeCompare(vb) : va - vb) * sortDir;
+      });
+
+      // Update the active-column arrow indicator.
+      document.querySelectorAll("th[data-key]").forEach(th => {
+        const span = th.querySelector(".arrow");
+        if (span) span.textContent =
+          th.dataset.key === sortKey ? (sortDir === 1 ? " ▲" : " ▼") : "";
+      });
+
       const tbody = document.getElementById("tbody");
       tbody.innerHTML = "";
-      const sorted = [...cars].sort((a, b) => a.price - b.price);
       document.getElementById("empty").style.display = cars.length ? "none" : "block";
       sorted.slice(0, 50).forEach((c, i) => {
         const p48 = pmt(c.price, cfg.entrada, cfg.rate, 48);
@@ -259,6 +298,15 @@
     // Recalcula sem refazer a busca quando a config de financiamento muda.
     ["rate", "entrada", "maxprice", "minyear", "yaxis"].forEach(id =>
       document.getElementById(id).addEventListener("input", render));
+
+    // Ordena a tabela ao clicar no cabeçalho (clique de novo inverte a direção).
+    document.querySelectorAll("th[data-key]").forEach(th =>
+      th.addEventListener("click", () => {
+        const key = th.dataset.key;
+        if (sortKey === key) sortDir = -sortDir;
+        else { sortKey = key; sortDir = 1; }
+        renderTable(lastTableCars);
+      }));
 
     // Dados de exemplo para demonstração quando a API não está disponível.
     const img = s => "https://picsum.photos/seed/" + s + "/210/130";
