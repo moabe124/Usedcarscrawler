@@ -47,17 +47,37 @@ SYSTEM_PROMPT = (
 )
 
 
-def chat(messages, temperature=0.2, max_tokens=700, json_mode=True, timeout=180):
-    """Call the chat/completions endpoint; return the assistant message text."""
-    payload = {
-        "model": LLM_MODEL,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
+def _nb():  # nullable boolean
+    return {"type": ["boolean", "null"]}
 
+
+# JSON Schema for structured output. LM Studio turns this into a grammar and
+# forces the model to fill every field — which also prevents empty replies.
+EVAL_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["resumo", "score", "score_motivo", "tags", "campos", "red_flags"],
+    "properties": {
+        "resumo": {"type": "string"},
+        "score": {"type": "number"},
+        "score_motivo": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "campos": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["unico_dono", "sinistro", "ipva_pago",
+                         "aceita_troca", "financiavel", "revisoes_em_dia"],
+            "properties": {
+                "unico_dono": _nb(), "sinistro": _nb(), "ipva_pago": _nb(),
+                "aceita_troca": _nb(), "financiavel": _nb(), "revisoes_em_dia": _nb(),
+            },
+        },
+        "red_flags": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+
+def _post(payload, timeout):
     req = urllib.request.Request(
         LLM_BASE_URL.rstrip("/") + "/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
@@ -66,8 +86,41 @@ def chat(messages, temperature=0.2, max_tokens=700, json_mode=True, timeout=180)
             "Authorization": f"Bearer {LLM_API_KEY}",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(f"LLM HTTP {exc.code}: {detail[:600]}") from None
+
+
+def chat(messages, temperature=0.2, max_tokens=800, schema=None, timeout=180):
+    """Call the chat/completions endpoint; return the assistant message text.
+
+    Pass `schema` (a JSON Schema dict) to enforce structured JSON output.
+    """
+    payload = {
+        "model": LLM_MODEL,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if schema:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "car_eval", "strict": True, "schema": schema},
+        }
+
+    try:
+        body = _post(payload, timeout)
+    except RuntimeError as exc:
+        # Older/leaner runtimes may reject response_format; retry as plain text.
+        if schema and "HTTP 400" in str(exc):
+            logging.warning("Retrying without response_format (%s)", exc)
+            payload.pop("response_format", None)
+            body = _post(payload, timeout)
+        else:
+            raise
     return body["choices"][0]["message"]["content"]
 
 
@@ -87,10 +140,12 @@ def evaluate_car(car, description):
         f"- Local: {car.get('location', '')}\n\n"
         f"DESCRIÇÃO DO VENDEDOR:\n{description.strip() or '(sem descrição)'}"
     )
-    content = chat([
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user},
-    ])
+    # Gemma's chat template rejects a separate "system" role, so we merge the
+    # instructions into a single user message — works across local models.
+    content = chat(
+        [{"role": "user", "content": SYSTEM_PROMPT + "\n\n" + user}],
+        schema=EVAL_SCHEMA,
+    )
     try:
         return json.loads(content)
     except json.JSONDecodeError:

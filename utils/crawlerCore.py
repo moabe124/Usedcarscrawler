@@ -190,18 +190,41 @@ def extract_description(html):
     return re.sub(r"\n{3,}", "\n\n", desc).strip()
 
 
-def fetch_detail(driver, link, settle_seconds=5):
-    """Visit one ad detail page and return its description text (or '')."""
-    driver.get(link)
+def warm_up(driver):
+    """Load the listing once so Cloudflare grants a clearance cookie before we
+    hit deep detail links cold (mirrors a real user going from search to an ad)."""
+    driver.get(formattedURL("", 1))
     try:
-        WebDriverWait(driver, 20).until(
-            lambda s: s.find_elements(
-                By.CSS_SELECTOR, 'script[type="application/ld+json"]'))
+        WebDriverWait(driver, 25).until(
+            lambda s: s.find_elements(By.CSS_SELECTOR, "section.olx-adcard"))
+        logging.info("Warm-up OK — Cloudflare cleared")
+        return True
     except TimeoutException:
-        logging.warning("Detail timeout for %s (title=%r)", link, driver.title)
-        return ""
-    time.sleep(settle_seconds)  # let JS settle / Cloudflare clear
-    return extract_description(driver.page_source)
+        logging.warning("Warm-up failed (title=%r)", driver.title)
+        return False
+
+
+def fetch_detail(driver, link, settle_seconds=5, retries=1, backoff_seconds=15):
+    """Visit one ad detail page and return its description text (or '').
+
+    Be gentle: Cloudflare escalates (and blocks the whole session) if you hammer
+    deep links. So we do at most one slow retry and otherwise give up on the car.
+    Space calls out at the caller level (see validate_llm).
+    """
+    for attempt in range(retries + 1):
+        driver.get(link)
+        try:
+            WebDriverWait(driver, 20).until(
+                lambda s: s.find_elements(
+                    By.CSS_SELECTOR, 'script[type="application/ld+json"]'))
+            time.sleep(settle_seconds)  # let JS settle / Cloudflare clear
+            return extract_description(driver.page_source)
+        except TimeoutException:
+            logging.warning("Detail blocked/timeout (try %d/%d) for %s (title=%r)",
+                            attempt + 1, retries + 1, link, driver.title)
+            if attempt < retries:
+                time.sleep(backoff_seconds)  # back off slowly; do NOT re-warm-spam
+    return ""
 
 
 if __name__ == "__main__":
