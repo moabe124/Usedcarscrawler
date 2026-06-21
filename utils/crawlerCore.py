@@ -1,3 +1,4 @@
+import os
 import re
 import json
 import time
@@ -36,26 +37,39 @@ def translate_date(inputDate):
     elif "ONTEM" in upper:
         day = datetime.now() - timedelta(days=1)
     else:
-        # e.g. "12 mar"
-        pieces = date_part.split(" ")
-        day_num = pieces[0]
-        month_abbr = pieces[1].lower() if len(pieces) > 1 else ""
-        month = monthsDictionary.get(month_abbr)
-        if not month:
+        # e.g. "12 mar", "12 de mar.", "12 de março" — OLX varies the wording,
+        # so scan the tokens for the day number and a known month (abbrev or full;
+        # the first 3 letters of every pt-BR month name match the dictionary keys).
+        tokens = date_part.replace(".", " ").split()
+        day_num = next((t for t in tokens if t.isdigit()), None)
+        month = next((monthsDictionary[t.lower()[:3]]
+                      for t in tokens if t.lower()[:3] in monthsDictionary), None)
+        if not day_num or not month:
             logging.warning("Unknown month in date: %r", inputDate)
             return datetime.now(BR_TZ)
         parsed = datetime.strptime(
             f"{day_num} {month} {datetime.now().year} {hour}", "%d %B %Y %H:%M")
-        return parsed.replace(tzinfo=BR_TZ)
+        parsed = parsed.replace(tzinfo=BR_TZ)
+        # Year rollover: OLX dates carry no year, so a date that lands in the
+        # future (e.g. "12 dez" parsed in January) really belongs to last year.
+        if parsed > datetime.now(BR_TZ) + timedelta(days=1):
+            parsed = parsed.replace(year=parsed.year - 1)
+        return parsed
 
     parsed = datetime.strptime(
         f"{day.strftime('%Y %b %d')} {hour}", "%Y %b %d %H:%M")
     return parsed.replace(tzinfo=BR_TZ)
 
 
-def configure_driver():
+def configure_driver(headless=None):
+    """Build the stealth Chrome driver. Set headless=False (or HEADLESS=0 in the
+    env) for a visible window, which clears Cloudflare more reliably."""
+    if headless is None:
+        headless = os.environ.get("HEADLESS", "1") != "0"
+
     chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
+    if headless:
+        chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--log-level=3")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")

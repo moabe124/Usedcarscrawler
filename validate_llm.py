@@ -46,6 +46,23 @@ def main():
         print(json.dumps(llm.evaluate_car(car, desc), ensure_ascii=False, indent=2))
         return
 
+    # Offline mode: evaluate descriptions already collected in a JSON file
+    # (see collect_samples.py) — no OLX/Cloudflare involved.
+    sample_file = os.environ.get("VALIDATE_FILE")
+    if sample_file:
+        with open(sample_file, encoding="utf-8") as f:
+            items = json.load(f)
+        print(f"Avaliando {len(items)} sample(s) de {sample_file}\n")
+        for i, car in enumerate(items, 1):
+            print("=" * 70)
+            print(f"[{i}/{len(items)}] {car['announceName'][:55]}")
+            print(f"\n  DESCRIÇÃO:\n  {car['description'][:400]}\n")
+            print("  AVALIAÇÃO DO LLM:")
+            print(json.dumps(llm.evaluate_car(car, car["description"]),
+                             ensure_ascii=False, indent=2))
+            print()
+        return
+
     col = get_collection()
     cars = list(col.find().sort("price", 1).limit(N))
     print(f"Validando {len(cars)} carro(s)...\n")

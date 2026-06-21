@@ -9,3 +9,5 @@ chromedriver.exe
 data
 
 .env
+
+samples.json

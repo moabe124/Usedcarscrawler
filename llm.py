@@ -121,14 +121,63 @@ def chat(messages, temperature=0.2, max_tokens=800, schema=None, timeout=180):
             body = _post(payload, timeout)
         else:
             raise
-    return body["choices"][0]["message"]["content"]
+
+    choice = body["choices"][0]
+    msg = choice.get("message", {})
+    content = (msg.get("content") or "").strip()
+    if not content:
+        # Reasoning models stash the answer in reasoning_content and leave
+        # content empty; surface what the server actually returned so we can
+        # tell "model is reasoning" from "generation got cut off".
+        content = (msg.get("reasoning_content") or "").strip()
+        logging.warning(
+            "Empty content (finish_reason=%s, usage=%s, msg_keys=%s)",
+            choice.get("finish_reason"), body.get("usage"), list(msg.keys()))
+    return content
+
+
+def _extract_json(text):
+    """Pull the first balanced {...} object out of free-form model text.
+
+    Reasoning models answer with their chain-of-thought followed by the JSON, so
+    we can't json.loads() the whole reply — we scan for the first complete object
+    (respecting strings/escapes) and try each "{" until one parses.
+    """
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_str = esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except json.JSONDecodeError:
+                        break  # malformed candidate; advance to the next "{"
+        start = text.find("{", start + 1)
+    return None
 
 
 def evaluate_car(car, description):
     """Run the heuristic evaluation for one car. Returns a parsed dict.
 
-    Adds `_raw` with the model's raw text if the JSON can't be parsed, so the
-    caller can inspect what went wrong during validation.
+    Primary path lets the (reasoning) model think freely and emit JSON at the
+    end — better judgement on score/red_flags than a grammar-constrained reply.
+    Falls back to strict json_schema if no JSON can be recovered, and finally to
+    `_raw` so the caller can still inspect what the model produced.
     """
     user = (
         f"DADOS DO ANÚNCIO:\n"
@@ -142,15 +191,24 @@ def evaluate_car(car, description):
     )
     # Gemma's chat template rejects a separate "system" role, so we merge the
     # instructions into a single user message — works across local models.
-    content = chat(
-        [{"role": "user", "content": SYSTEM_PROMPT + "\n\n" + user}],
-        schema=EVAL_SCHEMA,
-    )
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        logging.warning("LLM returned non-JSON; keeping raw text")
-        return {"_raw": content}
+    messages = [{"role": "user", "content": SYSTEM_PROMPT + "\n\n" + user}]
+
+    # Free-form: no grammar, so the model can reason before the JSON. Reasoning
+    # eats tokens, hence the bigger budget.
+    content = chat(messages, max_tokens=2000)
+    data = _extract_json(content)
+    if data is not None:
+        return data
+
+    # Fallback: force structured output via grammar. No room to "think", but
+    # guarantees a parseable object on non-reasoning models / odd replies.
+    logging.warning("No JSON in free-form reply; retrying with strict schema")
+    content = chat(messages, schema=EVAL_SCHEMA)
+    data = _extract_json(content)
+    if data is not None:
+        return data
+    logging.warning("LLM returned non-JSON; keeping raw text")
+    return {"_raw": content}
 
 
 def ping():
