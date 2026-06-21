@@ -70,6 +70,16 @@
       border-radius: 6px; font-size: .72rem; background: #23262d; color: #9aa0ac; }
     .chip.warn { background: #3a1717; color: #e0a0a0; }
     .chip.posi { background: #13361f; color: #7fd19a; }
+    .kpis { display: flex; gap: 12px; padding: 8px 20px 0; flex-wrap: wrap; }
+    .kpi { background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 12px 16px; min-width: 150px; flex: 1; }
+    .kpi .k-label { color: var(--muted); font-size: .72rem;
+      text-transform: uppercase; letter-spacing: .03em; }
+    .kpi .k-value { font-size: 1.3rem; font-weight: 700; margin-top: 4px; }
+    .kpi .k-sub { color: var(--muted); font-size: .75rem; margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .panel-title { margin: 0 0 12px; font-size: 1rem; }
+    .panel-title small { color: var(--muted); font-weight: 400; font-size: .8rem; }
   </style>
 </head>
 <body>
@@ -116,7 +126,15 @@
   </div>
   <div class="demo-note" id="demoNote">⚠️ API indisponível — exibindo dados de exemplo para demonstração.</div>
 
+  <div class="kpis" id="kpis"></div>
+
   <div class="panel"><div id="chartWrap"><canvas id="chart"></canvas></div></div>
+
+  <div class="panel">
+    <h3 class="panel-title">Top modelos com mais achados
+      <small>· anúncios abaixo dos pares (mín. 3 no modelo) · cor = % de achados</small></h3>
+    <div style="height: 340px; position: relative;"><canvas id="modelChart"></canvas></div>
+  </div>
 
   <div class="panel">
     <table>
@@ -137,8 +155,20 @@
   </div>
 
   <script>
-    let chart;
+    let chart, modelChart;
     let currentCars = [];
+
+    // Cor por score: verde (bom) / amarelo (médio) / vermelho (ruim) / cinza (s/ nota).
+    function scoreColor(s, alpha = 0.6) {
+      if (s == null) return `rgba(154,160,172,${alpha * 0.55})`;
+      const c = s >= 70 ? [90, 209, 127] : s >= 50 ? [224, 195, 65] : [224, 122, 122];
+      return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+    }
+    const median = arr => {
+      if (!arr.length) return 0;
+      const s = [...arr].sort((a, b) => a - b), m = s.length >> 1;
+      return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    };
     let sortKey = "score", sortDir = -1, lastTableCars = [];
 
     // Badge de score (custo-benefício) e chips das flags vindas do backend.
@@ -260,7 +290,7 @@
         type: "scatter",
         data: { datasets: [{
           label: "Carros", data: points,
-          backgroundColor: "rgba(108,140,255,0.55)",
+          backgroundColor: ctx => scoreColor(ctx.raw && ctx.raw.car ? ctx.raw.car.score : null),
           pointRadius: 5, pointHoverRadius: 8,
         }]},
         options: {
@@ -285,7 +315,76 @@
         }
       });
 
+      renderKpis(cars);
+      renderModelChart(cars);
       renderTable(cars);
+    }
+
+    function renderKpis(cars) {
+      const el = document.getElementById("kpis");
+      const scored = cars.filter(c => c.score != null);
+      const achados = cars.filter(c => (c.flags || []).includes("barato"));
+      const avg = scored.length
+        ? Math.round(scored.reduce((a, c) => a + c.score, 0) / scored.length) : null;
+      const medPrice = cars.length ? median(cars.map(c => c.price)) : 0;
+      // Melhor negócio: maior desconto vs pares, ignorando "preço suspeito".
+      const best = scored
+        .filter(c => !(c.flags || []).includes("preço suspeito"))
+        .sort((a, b) => (b.price_gap_pct || -999) - (a.price_gap_pct || -999))[0];
+      const card = (label, value, sub) =>
+        `<div class="kpi"><div class="k-label">${label}</div>` +
+        `<div class="k-value">${value}</div>` +
+        `<div class="k-sub">${sub || ""}</div></div>`;
+      el.innerHTML =
+        card("Carros", cars.length, scored.length + " com nota") +
+        card("Score médio", avg == null ? "—" : avg, scored.length ? "de 0 a 100" : "sem dados") +
+        card("Achados", achados.length, "abaixo dos pares") +
+        card("Preço mediano", BRL(medPrice), cars.length ? "do filtro atual" : "") +
+        card("Melhor negócio", best ? "-" + Math.round(Math.abs(best.price_gap_pct)) + "%" : "—",
+             best ? best.announceName.slice(0, 30) : "");
+    }
+
+    function renderModelChart(cars) {
+      const groups = {};
+      cars.forEach(c => { if (c.model) (groups[c.model] = groups[c.model] || []).push(c); });
+      const rows = Object.entries(groups).map(([model, cs]) => {
+        const sc = cs.filter(c => c.score != null);
+        const achados = cs.filter(c => (c.flags || []).includes("barato")).length;
+        return {
+          model, n: cs.length, achados,
+          pct: Math.round(100 * achados / cs.length),
+          avg: sc.length ? Math.round(sc.reduce((a, c) => a + c.score, 0) / sc.length) : null,
+        };
+      }).filter(r => r.achados > 0 && r.n >= 3)
+        .sort((a, b) => b.achados - a.achados).slice(0, 12);
+
+      if (modelChart) modelChart.destroy();
+      modelChart = new Chart(document.getElementById("modelChart"), {
+        type: "bar",
+        data: {
+          labels: rows.map(r => r.model),
+          datasets: [{ data: rows.map(r => r.achados),
+            // Cor pela % de achados: quanto mais frequente a pechincha, mais verde.
+            backgroundColor: rows.map(r =>
+              `rgba(90,209,127,${0.3 + 0.6 * Math.min(r.pct / 30, 1)})`), borderRadius: 4 }],
+        },
+        options: {
+          indexAxis: "y", responsive: true, maintainAspectRatio: false,
+          scales: {
+            x: { beginAtZero: true, ticks: { color: "#9aa0ac", precision: 0 },
+                 grid: { color: "#272b34" },
+                 title: { display: true, text: "Nº de achados (abaixo dos pares)", color: "#9aa0ac" } },
+            y: { ticks: { color: "#e6e8ec" }, grid: { display: false } },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: ctx => {
+              const r = rows[ctx.dataIndex];
+              return `${r.achados} achados de ${r.n} (${r.pct}%) · score médio ${r.avg}`;
+            } } },
+          },
+        },
+      });
     }
 
     function renderTable(cars) {

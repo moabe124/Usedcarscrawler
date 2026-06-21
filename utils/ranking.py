@@ -151,6 +151,7 @@ def score_car(car, ref, now_year):
             score = min(score, SUSPECT_SCORE_CAP)
 
     return {
+        "model": mk,
         "score": score,
         "ref_price": round(ref_price) if ref_price else None,
         "price_gap_pct": round(price_gap * 100, 1) if price_gap is not None else None,

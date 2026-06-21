@@ -14,7 +14,10 @@ cada carro como um ponto num gráfico — fica fácil achar o mais barato.
   A página tem uma **calculadora de financiamento** (Tabela Price): você configura
   juros (% a.m.) e entrada (R$), e cada carro mostra as parcelas em **48x e 60x**.
   O eixo Y do gráfico pode alternar entre preço total e valor da parcela. A tabela
-  também traz um **score de custo-benefício** (ver seção abaixo).
+  também traz um **score de custo-benefício** (ver seção abaixo). A página tem ainda
+  um **dashboard**: cards de resumo (KPIs), o scatter com os pontos **coloridos pelo
+  score** (verde = bom negócio) e um ranking de **modelos com mais achados**
+  (anúncios abaixo dos pares), pra decidir qual modelo vale a pena caçar.
 - **`utils/`** — núcleo do crawler (`crawlerCore.py`), o ranking de custo-benefício
   (`ranking.py`) e configurações (`constants.py`).
 
