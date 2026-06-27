@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Seminovos · Preços OLX</title>
+  <title>Seminovos · OLX + Webmotors</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
   <style>
     :root {
@@ -70,6 +70,11 @@
       border-radius: 6px; font-size: .72rem; background: #23262d; color: #9aa0ac; }
     .chip.warn { background: #3a1717; color: #e0a0a0; }
     .chip.posi { background: #13361f; color: #7fd19a; }
+    /* Origem do anúncio (fonte do crawler). */
+    .src { display: inline-block; padding: 1px 6px; border-radius: 6px;
+      font-size: .7rem; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+    .src.olx { background: #2a1f3a; color: #b692f6; }
+    .src.wm  { background: #102a3a; color: #5bb8e0; }
     .kpis { display: flex; gap: 12px; padding: 8px 20px 0; flex-wrap: wrap; }
     .kpi { background: var(--panel); border: 1px solid var(--border);
       border-radius: 12px; padding: 12px 16px; min-width: 150px; flex: 1; }
@@ -80,12 +85,33 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .panel-title { margin: 0 0 12px; font-size: 1rem; }
     .panel-title small { color: var(--muted); font-weight: 400; font-size: .8rem; }
+    /* Combo de multi-seleção (filtro de score). */
+    .multiselect { position: relative; }
+    .ms-toggle {
+      background: var(--panel); border: 1px solid var(--border); color: var(--text);
+      padding: 9px 11px; border-radius: 8px; font-size: .95rem; cursor: pointer;
+      height: 38px; min-width: 170px; text-align: left; font-weight: 400;
+    }
+    .ms-menu {
+      position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 6px; min-width: 210px; display: none;
+      box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    }
+    .ms-menu.open { display: block; }
+    .ms-menu label {
+      display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+      font-size: .9rem; color: var(--text); cursor: pointer; border-radius: 6px;
+      text-transform: none; letter-spacing: 0;
+    }
+    .ms-menu label:hover { background: #23262d; }
+    .ms-menu input { width: auto; margin: 0; }
   </style>
 </head>
 <body>
   <header>
-    <h1>🚗 Seminovos · Preços OLX</h1>
-    <div class="sub">Cada ponto é um anúncio. Passe o mouse para ver as parcelas; clique para abrir na OLX.</div>
+    <h1>🚗 Seminovos · OLX + Webmotors</h1>
+    <div class="sub">Cada ponto é um anúncio. Passe o mouse para ver detalhes e a origem; clique para abrir o anúncio.</div>
   </header>
 
   <div class="controls">
@@ -122,6 +148,26 @@
         <option value="p60">Parcela 60x</option>
       </select>
     </div>
+    <div class="field">
+      <label for="source">Origem</label>
+      <select id="source">
+        <option value="">Todas</option>
+        <option value="olx">OLX</option>
+        <option value="webmotors">Webmotors</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Score</label>
+      <div class="multiselect">
+        <button type="button" class="ms-toggle" id="scoreToggle">Todos os scores ▾</button>
+        <div class="ms-menu" id="scoreMenu">
+          <label><input type="checkbox" value="good" checked> 🟢 Verde · bom (≥70)</label>
+          <label><input type="checkbox" value="mid" checked> 🟡 Amarelo · médio (50–69)</label>
+          <label><input type="checkbox" value="bad" checked> 🔴 Vermelho · ruim (&lt;50)</label>
+          <label><input type="checkbox" value="na" checked> ⚪ Sem nota</label>
+        </div>
+      </div>
+    </div>
     <span class="stats" id="stats"></span>
   </div>
   <div class="demo-note" id="demoNote">⚠️ API indisponível — exibindo dados de exemplo para demonstração.</div>
@@ -142,6 +188,7 @@
         <th>#</th>
         <th data-key="score">Score<span class="arrow"></span></th>
         <th data-key="announceName">Anúncio<span class="arrow"></span></th>
+        <th data-key="source">Origem<span class="arrow"></span></th>
         <th data-key="year">Ano<span class="arrow"></span></th>
         <th data-key="km">KM<span class="arrow"></span></th>
         <th data-key="price">Preço<span class="arrow"></span></th>
@@ -157,6 +204,26 @@
   <script>
     let chart, modelChart;
     let currentCars = [];
+
+    // Categoria de score de um carro, casando com as cores do badge/gráfico.
+    function scoreCategory(c) {
+      if (c.score == null) return "na";
+      return c.score >= 70 ? "good" : c.score >= 50 ? "mid" : "bad";
+    }
+    const SCORE_LABELS = { good: "Verde", mid: "Amarelo", bad: "Vermelho", na: "Sem nota" };
+    const SCORE_KEY = "ucc:scoreFilter";
+    const selectedScores = () =>
+      [...document.querySelectorAll("#scoreMenu input:checked")].map(i => i.value);
+
+    // Atualiza o texto do botão conforme as categorias marcadas.
+    function updateScoreToggle() {
+      const sel = selectedScores();
+      const all = document.querySelectorAll("#scoreMenu input").length;
+      const btn = document.getElementById("scoreToggle");
+      btn.textContent = (sel.length === 0 ? "Nenhum score"
+        : sel.length === all ? "Todos os scores"
+        : sel.map(s => SCORE_LABELS[s]).join(", ")) + " ▾";
+    }
 
     // Cor por score: verde (bom) / amarelo (médio) / vermelho (ruim) / cinza (s/ nota).
     function scoreColor(s, alpha = 0.6) {
@@ -185,6 +252,11 @@
       const good = new Set(["barato", "km baixo"]);
       return " " + flags.map(f =>
         `<span class="chip ${good.has(f) ? "posi" : "warn"}">${f}</span>`).join("");
+    }
+    // Badge de origem. Registros antigos (sem `source`) eram todos da OLX.
+    function sourceBadge(c) {
+      const wm = c.source === "webmotors";
+      return `<span class="src ${wm ? "wm" : "olx"}">${wm ? "Webmotors" : "OLX"}</span>`;
     }
 
     const BRL = v => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
@@ -237,7 +309,7 @@
       el.innerHTML = img +
         `<div class="t-title">${c.announceName}</div>` +
         `<div class="t-price">${BRL(c.price)}</div>` +
-        `<div class="t-sub">${c.year} · ${c.kilometer}</div>` +
+        `<div class="t-sub">${sourceBadge(c)} ${c.year} · ${c.kilometer}</div>` +
         scoreLine +
         `<div class="t-parc">48x ${BRL2(p48)} · 60x ${BRL2(p60)}</div>`;
 
@@ -268,9 +340,13 @@
 
     function render() {
       const cfg = config();
+      const scores = selectedScores();
+      const src = document.getElementById("source").value;
       const cars = currentCars.filter(c =>
         (cfg.maxPrice <= 0 || c.price <= cfg.maxPrice) &&
-        (cfg.minYear <= 0 || (toYear(c.year) || 0) >= cfg.minYear));
+        (cfg.minYear <= 0 || (toYear(c.year) || 0) >= cfg.minYear) &&
+        (!src || (c.source || "olx") === src) &&
+        scores.includes(scoreCategory(c)));
 
       const yMeta = {
         price: { label: "Preço (R$)", val: c => c.price, n: 0 },
@@ -393,6 +469,7 @@
       const accessor = {
         score: c => (c.score == null ? -1 : c.score),
         announceName: c => (c.announceName || "").toLowerCase(),
+        source: c => (c.source || "olx"),
         year: c => toYear(c.year) || 0,
         km: c => parseInt(String(c.kilometer).replace(/\D/g, ""), 10) || 0,
         price: c => c.price,
@@ -420,7 +497,7 @@
         const p60 = pmt(c.price, cfg.entrada, cfg.rate, 60);
         const tr = document.createElement("tr");
         tr.innerHTML = `<td>${i + 1}</td><td>${scoreBadge(c)}</td>` +
-          `<td>${c.announceName}${flagChips(c.flags)}</td><td>${c.year}</td>` +
+          `<td>${c.announceName}${flagChips(c.flags)}</td><td>${sourceBadge(c)}</td><td>${c.year}</td>` +
           `<td>${c.kilometer}</td><td>${BRL(c.price)}</td>` +
           `<td>${BRL2(p48)}</td><td>${BRL2(p60)}</td>` +
           `<td><a href="${c.link}" target="_blank">ver →</a></td>`;
@@ -434,14 +511,14 @@
       if (e.key === "Enter") document.getElementById("search").click();
     });
     // Recalcula sem refazer a busca quando a config de financiamento muda.
-    ["rate", "entrada", "maxprice", "minyear", "yaxis"].forEach(id =>
+    ["rate", "entrada", "maxprice", "minyear", "yaxis", "source"].forEach(id =>
       document.getElementById(id).addEventListener("input", render));
     // O range de dias é filtrado no backend, então refaz a busca.
     document.getElementById("days").addEventListener("change", () =>
       load(document.getElementById("brand").value.trim()));
 
     // Persistência dos filtros no localStorage: sobrevive a refresh/reabrir a aba.
-    const FILTER_IDS = ["brand", "rate", "entrada", "maxprice", "minyear", "days", "yaxis"];
+    const FILTER_IDS = ["brand", "rate", "entrada", "maxprice", "minyear", "days", "yaxis", "source"];
     const FILTER_KEY = "ucc:filters";
 
     function saveFilters() {
@@ -465,6 +542,29 @@
       el.addEventListener("input", saveFilters);
       el.addEventListener("change", saveFilters);
     });
+
+    // Filtro de score (multi-seleção). Persistido em chave própria.
+    function saveScoreFilter() {
+      try { localStorage.setItem(SCORE_KEY, JSON.stringify(selectedScores())); } catch (e) {}
+    }
+    function restoreScoreFilter() {
+      let sel;
+      try { sel = JSON.parse(localStorage.getItem(SCORE_KEY)); } catch (e) {}
+      if (Array.isArray(sel))
+        document.querySelectorAll("#scoreMenu input").forEach(i => { i.checked = sel.includes(i.value); });
+      updateScoreToggle();
+    }
+    document.getElementById("scoreToggle").addEventListener("click", e => {
+      e.stopPropagation();
+      document.getElementById("scoreMenu").classList.toggle("open");
+    });
+    document.getElementById("scoreMenu").addEventListener("click", e => e.stopPropagation());
+    document.getElementById("scoreMenu").addEventListener("change", () => {
+      updateScoreToggle(); saveScoreFilter(); render();
+    });
+    // Clique fora fecha o menu.
+    document.addEventListener("click", () =>
+      document.getElementById("scoreMenu").classList.remove("open"));
 
     // Ordena a tabela ao clicar no cabeçalho (clique de novo inverte a direção).
     document.querySelectorAll("th[data-key]").forEach(th =>
@@ -494,6 +594,7 @@
 
     // Restaura os filtros salvos antes da primeira busca.
     const restored = restoreFilters();
+    restoreScoreFilter();
     load((restored.brand || "").trim());
   </script>
 </body>

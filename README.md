@@ -9,7 +9,17 @@ cada carro como um ponto num gráfico — fica fácil achar o mais barato.
 
 ## Componentes
 
-- **`updateDatabase.py`** — crawler: roda em loop, raspa a OLX via Selenium e grava no MongoDB.
+- **`updateDatabase.py`** — crawler: roda **OLX e Webmotors em paralelo** (uma thread
+  por fonte), em loop, e grava tudo na mesma coleção do MongoDB. Cada fonte tem sua
+  própria cadência e tolera falha da outra. Desligue qualquer uma com
+  `ENABLE_OLX=0` / `ENABLE_WEBMOTORS=0`.
+- **`utils/crawlerCore.py`** — coleta da **OLX** (Cloudflare; Selenium stealth headless).
+- **`utils/webmotorsCore.py`** — coleta da **Webmotors**. O site fica atrás do
+  **PerimeterX**, que bloqueia Selenium comum; por isso usa **undetected-chromedriver**
+  e **precisa rodar com janela visível** (headless é barrado — veja abaixo). Extrai
+  tudo da **listagem** (nunca abre o anúncio), parseando o DOM renderizado. O id único
+  do anúncio (final da URL) é gravado como `wm-<id>`, então nunca colide com os ids da
+  OLX. Cada registro leva `source: "olx"` / `source: "webmotors"`.
 - **`app.py`** — app Flask: serve a API JSON (`/api/cars`) e a página com o gráfico (`/`).
   A página tem uma **calculadora de financiamento** (Tabela Price): você configura
   juros (% a.m.) e entrada (R$), e cada carro mostra as parcelas em **48x e 60x**.
@@ -76,7 +86,32 @@ python updateDatabase.py
 > **Modo backfill:** quando o banco tem menos de `BACKFILL_THRESHOLD` registros, o
 > crawler ignora a parada por anúncios repetidos e percorre páginas continuamente
 > até alcançar `BACKFILL_TARGET` registros (ou esgotar as páginas). Útil pra popular
-> o banco do zero.
+> o banco do zero. (A Webmotors tem seu próprio backfill, com as variáveis `WEBMOTORS_*`.)
+
+### Variáveis da Webmotors
+
+A Webmotors está atrás do **PerimeterX**, mais agressivo que o Cloudflare da OLX. Dois
+pontos práticos: **roda com janela visível** (headless é bloqueado) e os **delays são
+propositalmente folgados** pra não tomar ban de IP (há jitter aleatório de ±25%).
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `ENABLE_OLX` | `1` | Liga/desliga a coleta da OLX |
+| `ENABLE_WEBMOTORS` | `1` | Liga/desliga a coleta da Webmotors |
+| `WEBMOTORS_HEADLESS` | `0` | `1` roda sem janela (só funciona atrás de display virtual, ex.: xvfb) |
+| `WEBMOTORS_ESTADOCIDADE` | `Pernambuco` | Região da busca (espelha o escopo PE da OLX) |
+| `WEBMOTORS_PAGE_LIMIT` | `5` | Páginas por ciclo normal |
+| `WEBMOTORS_PAGE_DELAY` | `150` | Segundos entre páginas (~2,5 min) |
+| `WEBMOTORS_CYCLE_DELAY` | `900` | Segundos entre ciclos (~15 min) |
+| `WEBMOTORS_BACKFILL_THRESHOLD` | `200` | Abaixo disso, entra em backfill |
+| `WEBMOTORS_BACKFILL_TARGET` | `500` | Meta de registros no backfill |
+| `WEBMOTORS_BACKFILL_MAX_PAGES` | `30` | Teto de páginas no backfill |
+| `CHROME_MAJOR` | (auto) | Força a versão do chromedriver; só se a detecção automática falhar |
+
+> **Por que janela visível?** O PerimeterX detecta o fingerprint headless na hora
+> (a listagem volta "Access to this page has been denied"). Com janela visível, o
+> undetected-chromedriver passa. Em servidor Linux, rode atrás de um `xvfb` e ligue
+> `WEBMOTORS_HEADLESS=1`.
 
 ## Ranking de custo-benefício
 

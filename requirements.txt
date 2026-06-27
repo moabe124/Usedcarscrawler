@@ -2,6 +2,12 @@
 selenium==4.27.1
 beautifulsoup4==4.12.3
 
+# Webmotors sits behind PerimeterX; plain stealth Selenium is blocked, so the
+# Webmotors collector drives Chrome through undetected-chromedriver. setuptools
+# is required on Python 3.12+ (it provides the distutils module uc imports).
+undetected-chromedriver==3.5.5
+setuptools
+
 # Database. dnspython is required to resolve Atlas mongodb+srv:// URIs.
 pymongo==4.10.1
 dnspython==2.8.0

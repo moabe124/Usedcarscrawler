@@ -78,6 +78,11 @@ def configure_driver(headless=None):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1280,900")
+    # 'eager' returns once the DOM is ready instead of blocking until every ad /
+    # tracker finishes. The 'normal' default can exceed Selenium's 120s command
+    # timeout on heavy OLX pages (worse when a second browser runs in parallel),
+    # which surfaces as a ReadTimeoutError that kills the whole cycle.
+    chrome_options.page_load_strategy = "eager"
     # Lower the automation fingerprint so OLX's Cloudflare challenge lets us in.
     # Plain headless gets blocked; these tweaks + a real UA pass the managed check.
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
@@ -130,6 +135,7 @@ def parse_card(card):
 
     return {
         "adId": ad_id,
+        "source": "olx",
         "announceName": title,
         "formattedPrice": f"R$ {price:,}".replace(",", "."),
         "price": price,
@@ -147,7 +153,18 @@ def parse_card(card):
 
 
 def getCars(driver, carBrand="", page=1):
-    driver.get(formattedURL(carBrand, page))
+    # Abort a stuck navigation well before Selenium's 120s command timeout, so a
+    # slow/hanging page raises a clean TimeoutException instead of crashing the
+    # cycle with a ReadTimeoutError. With page_load_strategy='eager' a healthy
+    # page returns in a few seconds.
+    driver.set_page_load_timeout(60)
+    try:
+        driver.get(formattedURL(carBrand, page))
+    except TimeoutException:
+        logging.warning("Page load timed out on page %s (title=%r)", page, driver.title)
+        # Fall through: the DOM is often usable anyway; if not, the wait below
+        # times out and we return [].
+        pass
 
     try:
         # Waiting for the cards also gives the Cloudflare challenge time to resolve.
