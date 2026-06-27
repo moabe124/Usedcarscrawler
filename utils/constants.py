@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # Requires Google Chrome installed. Selenium Manager resolves the driver.
 
 import os
@@ -38,4 +38,4 @@ monthsDictionary = {
 
 
 def formattedURL(carBrand, page):
-    return f"https://www.olx.com.br/autos-e-pecas/carros-vans-e-utilitarios/estado-pe?o={page}&q={carBrand}"
+    return f"https://www.olx.com.br/autos-e-pecas/carros-vans-e-utilitarios/estado-pe?o={page}&q={carBrand}&sf=1"

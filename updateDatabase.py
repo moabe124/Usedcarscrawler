@@ -31,15 +31,25 @@ def get_collection():
 
 
 def upsert_cars(collection, cars, page):
-    """Upsert ads by announceName. Returns how many existing ads were updated."""
+    """Upsert ads by their unique OLX ad id. Returns how many existing ads were
+    updated (i.e. already-known ads re-seen on this page)."""
     if not cars:
         logging.info("No cars to upsert on page %s", page)
         return 0
 
-    operations = [
-        UpdateOne({"announceName": car["announceName"]}, {"$set": car}, upsert=True)
-        for car in cars
-    ]
+    operations = []
+    for car in cars:
+        # Key on adId (the stable ad identity); fall back to the link, then the
+        # title, only if the id couldn't be extracted. The title alone collides
+        # across distinct ads, which falsely flags fresh ads as duplicates.
+        key = ({"adId": car["adId"]} if car.get("adId")
+               else {"link": car["link"]} if car.get("link")
+               else {"announceName": car["announceName"]})
+        created = car.pop("created", None)
+        update = {"$set": car}
+        if created is not None:
+            update["$setOnInsert"] = {"created": created}
+        operations.append(UpdateOne(key, update, upsert=True))
     result = collection.bulk_write(operations)
 
     if result.modified_count > 0:

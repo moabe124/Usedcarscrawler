@@ -20,6 +20,9 @@ BR_TZ = ZoneInfo("Etc/GMT-3")
 
 YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
+# OLX ad links end in the unique numeric ad id, e.g. ".../gol-1-0-2013-1510769511".
+AD_ID_RE = re.compile(r"-(\d+)(?:[/?#]|$)")
+
 
 def translate_date(inputDate):
     """Parse OLX post dates like 'Hoje, 13:45', 'Ontem, 09:10' or '12 mar, 18:30'."""
@@ -107,6 +110,7 @@ def parse_card(card):
     title = title_el.get_text(strip=True) if title_el else ""
 
     link_el = card.select_one("a.olx-adcard__link") or card.find("a", href=True)
+    link = link_el["href"] if link_el and link_el.has_attr("href") else ""
     img_el = card.find("img")
 
     details = [d.get_text(" ", strip=True) for d in card.select(".olx-adcard__detail")]
@@ -120,7 +124,12 @@ def parse_card(card):
     date_el = card.select_one("p.olx-adcard__date")
     post_date = date_el.get_text(strip=True) if date_el else ""
 
+    # The ad id is the stable identity; the title repeats across distinct ads.
+    ad_id_match = AD_ID_RE.search(link)
+    ad_id = ad_id_match.group(1) if ad_id_match else (link or None)
+
     return {
+        "adId": ad_id,
         "announceName": title,
         "formattedPrice": f"R$ {price:,}".replace(",", "."),
         "price": price,
@@ -129,7 +138,7 @@ def parse_card(card):
         "color": details[1] if len(details) > 1 else "",
         "engine": details[2] if len(details) > 2 else "",
         "bodyType": details[3] if len(details) > 3 else "",
-        "link": link_el["href"] if link_el and link_el.has_attr("href") else "",
+        "link": link,
         "img": img_el.get("src", "") if img_el else "",
         "location": location_el.get_text(strip=True) if location_el else "",
         "postDate": translate_date(post_date) if post_date else datetime.now(BR_TZ),
